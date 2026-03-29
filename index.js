@@ -56,13 +56,12 @@ app.get('/subtitle', async (req, res) => {
       return res.json({ _hasTranscript: false, _noSubtitle: true });
     }
 
-    const transcript = parseVTT(subtitleText);
+    const fullText = extractText(subtitleText);
 
     res.json({
       _hasTranscript: true,
       _captionLang: lang,
-      transcript: transcript,
-      fullText: transcript.map(t => t.text).join(' ')
+      fullText: fullText
     });
 
   } catch (error) {
@@ -70,34 +69,28 @@ app.get('/subtitle', async (req, res) => {
   }
 });
 
-function parseVTT(vttText) {
+function extractText(vttText) {
   const lines = vttText.split('\n');
-  const transcript = [];
-  let currentTime = null;
+  const textParts = [];
   const seen = new Set();
 
   for (const line of lines) {
     const trimmed = line.trim();
     
-    if (trimmed.includes('-->')) {
-      const match = trimmed.match(/(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/);
-      if (match) {
-        currentTime = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]);
-      } else {
-        const match2 = trimmed.match(/(\d{2}):(\d{2})[.,](\d{3})/);
-        if (match2) {
-          currentTime = parseInt(match2[1]) * 60 + parseInt(match2[2]);
-        }
-      }
-    } else if (trimmed && !trimmed.startsWith('WEBVTT') && !trimmed.match(/^\d+$/) && currentTime !== null) {
+    if (trimmed && 
+        !trimmed.includes('-->') && 
+        !trimmed.startsWith('WEBVTT') && 
+        !trimmed.match(/^\d+$/) &&
+        !trimmed.startsWith('NOTE')) {
       const cleanText = trimmed.replace(/<[^>]*>/g, '').trim();
       if (cleanText && !seen.has(cleanText)) {
         seen.add(cleanText);
-        transcript.push({ start: currentTime, text: cleanText });
+        textParts.push(cleanText);
       }
     }
   }
-  return transcript;
+  
+  return textParts.join(' ');
 }
 
 const PORT = process.env.PORT || 3000;
