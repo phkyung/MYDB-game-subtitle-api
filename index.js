@@ -23,33 +23,50 @@ app.get('/subtitle', async (req, res) => {
 
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // 모든 자막 다운로드 시도
+    const cmd = `yt-dlp --skip-download --write-sub --write-auto-sub --sub-lang "ko.*,en.*,ko,en" --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1 || true`;
+    execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
+    
+    // 다운로드된 자막 파일 찾기
     let subtitleText = '';
     let lang = '';
     
-    const langs = ['ko', 'en'];
-    for (const tryLang of langs) {
-      try {
-        const cmd = `yt-dlp --skip-download --write-sub --write-auto-sub --sub-lang ${tryLang} --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`;
-        execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
-        
+    try {
+      const findCmd = `ls -la /tmp/${videoId}*.vtt 2>/dev/null || echo "no files"`;
+      const fileList = execSync(findCmd, { encoding: 'utf-8' });
+      console.log('Found files:', fileList);
+      
+      // 한국어 우선, 영어 차선
+      const patterns = ['ko', 'kr', 'en'];
+      for (const pattern of patterns) {
         try {
-          subtitleText = execSync(`cat /tmp/${videoId}.${tryLang}.vtt`, { encoding: 'utf-8' });
-          lang = tryLang;
-          break;
-        } catch (e) {
-          const findCmd = `ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`;
-          const foundFile = execSync(findCmd, { encoding: 'utf-8' }).trim();
+          const findLang = `ls /tmp/${videoId}*${pattern}*.vtt 2>/dev/null | head -1`;
+          const foundFile = execSync(findLang, { encoding: 'utf-8' }).trim();
           if (foundFile) {
             subtitleText = execSync(`cat "${foundFile}"`, { encoding: 'utf-8' });
-            lang = tryLang;
+            lang = pattern;
             break;
           }
+        } catch (e) {
+          continue;
         }
-      } catch (e) {
-        continue;
       }
+      
+      // 패턴 매칭 실패시 아무 vtt 파일이나
+      if (!subtitleText) {
+        const anyFile = `ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`;
+        const foundFile = execSync(anyFile, { encoding: 'utf-8' }).trim();
+        if (foundFile) {
+          subtitleText = execSync(`cat "${foundFile}"`, { encoding: 'utf-8' });
+          lang = 'unknown';
+        }
+      }
+    } catch (e) {
+      console.log('File search error:', e.message);
     }
 
+    // 임시 파일 정리
     try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
 
     if (!subtitleText || !subtitleText.includes('-->')) {
@@ -81,7 +98,9 @@ function extractText(vttText) {
         !trimmed.includes('-->') && 
         !trimmed.startsWith('WEBVTT') && 
         !trimmed.match(/^\d+$/) &&
-        !trimmed.startsWith('NOTE')) {
+        !trimmed.startsWith('NOTE') &&
+        !trimmed.startsWith('Kind:') &&
+        !trimmed.startsWith('Language:')) {
       const cleanText = trimmed.replace(/<[^>]*>/g, '').trim();
       if (cleanText && !seen.has(cleanText)) {
         seen.add(cleanText);
