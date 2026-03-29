@@ -11,7 +11,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'YouTube Subtitle API v5' });
+  res.json({ status: 'ok', message: 'YouTube Subtitle API v6' });
 });
 
 app.get('/subtitle', async (req, res) => {
@@ -21,8 +21,11 @@ app.get('/subtitle', async (req, res) => {
     return res.status(400).json({ error: 'videoId required' });
   }
 
+  const debug = [];
+
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
+    debug.push(`Processing: ${videoId}`);
     
     // 임시 파일 정리
     try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
@@ -32,61 +35,87 @@ app.get('/subtitle', async (req, res) => {
 
     // 시도 1: 한국어 원본 자막
     try {
-      execSync(`yt-dlp --skip-download --write-sub --sub-lang ko --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`, { encoding: 'utf-8', timeout: 60000 });
+      const cmd1 = `yt-dlp --skip-download --write-sub --sub-lang ko --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`;
+      debug.push(`Try 1 (ko original): running...`);
+      const output1 = execSync(cmd1, { encoding: 'utf-8', timeout: 60000 });
+      debug.push(`Try 1 output: ${output1.substring(0, 200)}`);
       const file = execSync(`ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
       if (file) {
         subtitleText = execSync(`cat "${file}"`, { encoding: 'utf-8' });
         lang = 'ko';
+        debug.push(`Try 1 SUCCESS: ${file}`);
       }
-    } catch (e) {}
+    } catch (e) {
+      debug.push(`Try 1 failed: ${e.message.substring(0, 100)}`);
+    }
 
     // 시도 2: 영어 원본 자막
     if (!subtitleText) {
       try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
       try {
-        execSync(`yt-dlp --skip-download --write-sub --sub-lang en --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`, { encoding: 'utf-8', timeout: 60000 });
+        const cmd2 = `yt-dlp --skip-download --write-sub --sub-lang en --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`;
+        debug.push(`Try 2 (en original): running...`);
+        const output2 = execSync(cmd2, { encoding: 'utf-8', timeout: 60000 });
+        debug.push(`Try 2 output: ${output2.substring(0, 200)}`);
         const file = execSync(`ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
         if (file) {
           subtitleText = execSync(`cat "${file}"`, { encoding: 'utf-8' });
           lang = 'en';
+          debug.push(`Try 2 SUCCESS: ${file}`);
         }
-      } catch (e) {}
+      } catch (e) {
+        debug.push(`Try 2 failed: ${e.message.substring(0, 100)}`);
+      }
     }
 
     // 시도 3: 한국어 자동생성 자막
     if (!subtitleText) {
       try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
       try {
-        execSync(`yt-dlp --skip-download --write-auto-sub --sub-lang ko --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`, { encoding: 'utf-8', timeout: 60000 });
+        const cmd3 = `yt-dlp --skip-download --write-auto-sub --sub-lang ko --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`;
+        debug.push(`Try 3 (ko auto): running...`);
+        const output3 = execSync(cmd3, { encoding: 'utf-8', timeout: 60000 });
+        debug.push(`Try 3 output: ${output3.substring(0, 200)}`);
         const file = execSync(`ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
         if (file) {
           subtitleText = execSync(`cat "${file}"`, { encoding: 'utf-8' });
           lang = 'ko-auto';
+          debug.push(`Try 3 SUCCESS: ${file}`);
         }
-      } catch (e) {}
+      } catch (e) {
+        debug.push(`Try 3 failed: ${e.message.substring(0, 100)}`);
+      }
     }
 
     // 시도 4: 영어 자동생성 자막
     if (!subtitleText) {
       try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
       try {
-        execSync(`yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`, { encoding: 'utf-8', timeout: 60000 });
+        const cmd4 = `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`;
+        debug.push(`Try 4 (en auto): running...`);
+        const output4 = execSync(cmd4, { encoding: 'utf-8', timeout: 60000 });
+        debug.push(`Try 4 output: ${output4.substring(0, 200)}`);
         const file = execSync(`ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
         if (file) {
           subtitleText = execSync(`cat "${file}"`, { encoding: 'utf-8' });
           lang = 'en-auto';
+          debug.push(`Try 4 SUCCESS: ${file}`);
         }
-      } catch (e) {}
+      } catch (e) {
+        debug.push(`Try 4 failed: ${e.message.substring(0, 100)}`);
+      }
     }
 
     // 임시 파일 정리
     try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
 
     if (!subtitleText || !subtitleText.includes('-->')) {
-      return res.json({ _hasTranscript: false, _noSubtitle: true });
+      debug.push(`No subtitle found after all tries`);
+      return res.json({ _hasTranscript: false, _noSubtitle: true, _debug: debug });
     }
 
     const { transcript, fullText } = parseVTT(subtitleText);
+    debug.push(`Parsed: ${transcript.length} segments`);
 
     res.json({
       _hasTranscript: true,
@@ -96,7 +125,8 @@ app.get('/subtitle', async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ _hasTranscript: false, _error: error.message });
+    debug.push(`Fatal error: ${error.message}`);
+    res.status(500).json({ _hasTranscript: false, _error: error.message, _debug: debug });
   }
 });
 
@@ -109,13 +139,12 @@ function parseVTT(vttText) {
   for (const line of lines) {
     const trimmed = line.trim();
     
-    // 타임스탬프 라인 (00:00:00.000 --> 00:00:00.000)
+    // 타임스탬프 라인
     if (trimmed.includes('-->')) {
       const match = trimmed.match(/(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/);
       if (match) {
         currentTime = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseInt(match[3]);
       } else {
-        // MM:SS.mmm 형식
         const match2 = trimmed.match(/(\d{2}):(\d{2})[.,](\d{3})/);
         if (match2) {
           currentTime = parseInt(match2[1]) * 60 + parseInt(match2[2]);
