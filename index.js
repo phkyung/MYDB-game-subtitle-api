@@ -14,24 +14,6 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'YouTube Subtitle API' });
 });
 
-// 디버그용 - 자막 목록만 확인
-app.get('/debug', async (req, res) => {
-  const videoId = req.query.videoId;
-  
-  if (!videoId) {
-    return res.status(400).json({ error: 'videoId required' });
-  }
-
-  try {
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const cmd = `yt-dlp --list-subs "${url}" 2>&1`;
-    const output = execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
-    res.json({ videoId, subtitleList: output });
-  } catch (error) {
-    res.json({ error: error.message, stderr: error.stderr });
-  }
-});
-
 app.get('/subtitle', async (req, res) => {
   const videoId = req.query.videoId;
   
@@ -39,73 +21,66 @@ app.get('/subtitle', async (req, res) => {
     return res.status(400).json({ error: 'videoId required' });
   }
 
-  const logs = [];
-
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    logs.push(`URL: ${url}`);
-    
-    // 먼저 자막 목록 확인
-    try {
-      const listCmd = `yt-dlp --list-subs "${url}" 2>&1`;
-      const listOutput = execSync(listCmd, { encoding: 'utf-8', timeout: 30000 });
-      logs.push(`Available subs: ${listOutput.substring(0, 500)}`);
-    } catch (e) {
-      logs.push(`List error: ${e.message}`);
-    }
-    
-    // 모든 자막 다운로드 시도 (더 넓은 범위)
-    const cmd = `yt-dlp --skip-download --all-subs --sub-format vtt -o "/tmp/${videoId}" "${url}" 2>&1`;
-    logs.push(`Command: ${cmd}`);
-    
-    const cmdOutput = execSync(cmd, { encoding: 'utf-8', timeout: 60000 });
-    logs.push(`yt-dlp output: ${cmdOutput.substring(0, 500)}`);
-    
-    // 다운로드된 파일 확인
     let subtitleText = '';
     let lang = '';
     
-    const findCmd = `ls -la /tmp/ | grep ${videoId} 2>&1 || echo "no files found"`;
-    const fileList = execSync(findCmd, { encoding: 'utf-8' });
-    logs.push(`Files: ${fileList}`);
-    
-    // 한국어 우선, 영어 차선
-    const patterns = ['ko', 'kr', 'en'];
-    for (const pattern of patterns) {
-      try {
-        const findLang = `ls /tmp/${videoId}*${pattern}*.vtt 2>/dev/null | head -1`;
-        const foundFile = execSync(findLang, { encoding: 'utf-8' }).trim();
-        if (foundFile) {
-          logs.push(`Found file: ${foundFile}`);
-          subtitleText = execSync(`cat "${foundFile}"`, { encoding: 'utf-8' });
-          lang = pattern;
-          break;
-        }
-      } catch (e) {
-        continue;
+    // 방법 1: 원본 한국어 자막 시도
+    try {
+      const cmd1 = `yt-dlp --skip-download --write-sub --sub-lang ko --sub-format vtt -o "/tmp/${videoId}_orig" "${url}" 2>&1`;
+      execSync(cmd1, { encoding: 'utf-8', timeout: 60000 });
+      const file1 = execSync(`ls /tmp/${videoId}_orig*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
+      if (file1) {
+        subtitleText = execSync(`cat "${file1}"`, { encoding: 'utf-8' });
+        lang = 'ko';
       }
-    }
-    
-    // 패턴 매칭 실패시 아무 vtt 파일이나
+    } catch (e) {}
+
+    // 방법 2: 원본 영어 자막 시도
     if (!subtitleText) {
       try {
-        const anyFile = `ls /tmp/${videoId}*.vtt 2>/dev/null | head -1`;
-        const foundFile = execSync(anyFile, { encoding: 'utf-8' }).trim();
-        if (foundFile) {
-          logs.push(`Fallback file: ${foundFile}`);
-          subtitleText = execSync(`cat "${foundFile}"`, { encoding: 'utf-8' });
-          lang = 'unknown';
+        const cmd2 = `yt-dlp --skip-download --write-sub --sub-lang en --sub-format vtt -o "/tmp/${videoId}_orig" "${url}" 2>&1`;
+        execSync(cmd2, { encoding: 'utf-8', timeout: 60000 });
+        const file2 = execSync(`ls /tmp/${videoId}_orig*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
+        if (file2) {
+          subtitleText = execSync(`cat "${file2}"`, { encoding: 'utf-8' });
+          lang = 'en';
         }
-      } catch (e) {
-        logs.push(`No vtt files found`);
-      }
+      } catch (e) {}
+    }
+
+    // 방법 3: 자동생성 한국어 자막 시도
+    if (!subtitleText) {
+      try {
+        const cmd3 = `yt-dlp --skip-download --write-auto-sub --sub-lang ko --sub-format vtt -o "/tmp/${videoId}_auto" "${url}" 2>&1`;
+        execSync(cmd3, { encoding: 'utf-8', timeout: 60000 });
+        const file3 = execSync(`ls /tmp/${videoId}_auto*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
+        if (file3) {
+          subtitleText = execSync(`cat "${file3}"`, { encoding: 'utf-8' });
+          lang = 'ko-auto';
+        }
+      } catch (e) {}
+    }
+
+    // 방법 4: 자동생성 영어 자막 시도
+    if (!subtitleText) {
+      try {
+        const cmd4 = `yt-dlp --skip-download --write-auto-sub --sub-lang en --sub-format vtt -o "/tmp/${videoId}_auto" "${url}" 2>&1`;
+        execSync(cmd4, { encoding: 'utf-8', timeout: 60000 });
+        const file4 = execSync(`ls /tmp/${videoId}_auto*.vtt 2>/dev/null | head -1`, { encoding: 'utf-8' }).trim();
+        if (file4) {
+          subtitleText = execSync(`cat "${file4}"`, { encoding: 'utf-8' });
+          lang = 'en-auto';
+        }
+      } catch (e) {}
     }
 
     // 임시 파일 정리
     try { execSync(`rm -f /tmp/${videoId}*`); } catch (e) {}
 
     if (!subtitleText || !subtitleText.includes('-->')) {
-      return res.json({ _hasTranscript: false, _noSubtitle: true, _debug: logs });
+      return res.json({ _hasTranscript: false, _noSubtitle: true });
     }
 
     const fullText = extractText(subtitleText);
@@ -117,8 +92,7 @@ app.get('/subtitle', async (req, res) => {
     });
 
   } catch (error) {
-    logs.push(`Error: ${error.message}`);
-    res.status(500).json({ _hasTranscript: false, _error: error.message, _debug: logs });
+    res.status(500).json({ _hasTranscript: false, _error: error.message });
   }
 });
 
